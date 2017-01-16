@@ -1,7 +1,7 @@
 {% if page.excerpt %}
 {% assign type = 'article' %}
 {% assign sectionTitle = 'React Blog' %}
-{% assign description = page.excerpt | strip_html %}
+{% assign description = page.excerpt | remove: '<p>' | remove: '</p>' %}
 {% else %}
 {% assign type = 'website' %}
 {% assign sectionTitle = 'React' %}

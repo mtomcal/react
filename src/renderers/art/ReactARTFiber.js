@@ -464,10 +464,6 @@ const ARTRenderer = ReactFiberReconciler({
     return false;
   },
 
-  getPublicInstance(instance) {
-    return instance;
-  },
-
   insertBefore(parentInstance, child, beforeChild) {
     invariant(
       child !== beforeChild,

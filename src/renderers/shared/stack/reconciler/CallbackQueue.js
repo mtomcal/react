@@ -23,7 +23,7 @@ var invariant = require('invariant');
  * This implements `PooledClass`, so you should never need to instantiate this.
  * Instead, use `CallbackQueue.getPooled()`.
  *
- * @class CallbackQueue
+ * @class ReactMountReady
  * @implements PooledClass
  * @internal
  */

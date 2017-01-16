@@ -107,7 +107,7 @@ MyComponent.propTypes = {
 };
 ```
 
-### Requiring Single Child
+### Requiring Single Children
 
 With `React.PropTypes.element` you can specify that only a single child can be passed to a component as children.
 

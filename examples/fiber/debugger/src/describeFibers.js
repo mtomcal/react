@@ -19,18 +19,16 @@ function getFriendlyTag(tag) {
     case 3:
       return '[root]';
     case 4:
-      return '[portal]';
-    case 5:
       return '[host]';
-    case 6:
+    case 5:
       return '[text]';
-    case 7:
+    case 6:
       return '[coroutine]';
-    case 8:
+    case 7:
       return '[handler]';
-    case 9:
+    case 8:
       return '[yield]';
-    case 10:
+    case 9:
       return '[frag]';
     default:
       throw new Error('Unknown tag.');
@@ -41,9 +39,6 @@ export default function describeFibers(rootFiber, workInProgress) {
   let descriptions = {};
   function acknowledgeFiber(fiber) {
     if (!fiber) {
-      return null;
-    }
-    if (!fiber.return && fiber.tag !== 3) {
       return null;
     }
     const id = getFiberUniqueID(fiber);

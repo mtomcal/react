@@ -232,10 +232,6 @@ const NativeRenderer = ReactFiberReconciler({
     return emptyObject;
   },
 
-  getPublicInstance(instance) {
-    return instance;
-  },
-
   insertBefore(
     parentInstance : Instance | Container,
     child : Instance | TextInstance,

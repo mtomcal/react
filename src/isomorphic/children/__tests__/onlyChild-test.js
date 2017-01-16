@@ -83,12 +83,15 @@ describe('onlyChild', () => {
     }).not.toThrow();
   });
 
+
   it('should return the only child', () => {
-    var instance =
-      <WrapComponent>
-        <span />
-      </WrapComponent>;
-    expect(onlyChild(instance.props.children)).toEqual(<span />);
+    expect(function() {
+      var instance =
+        <WrapComponent>
+          <span />
+        </WrapComponent>;
+      onlyChild(instance.props.children);
+    }).not.toThrow();
   });
 
 });

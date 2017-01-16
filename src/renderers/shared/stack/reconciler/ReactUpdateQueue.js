@@ -16,11 +16,24 @@ var ReactInstanceMap = require('ReactInstanceMap');
 var ReactInstrumentation = require('ReactInstrumentation');
 var ReactUpdates = require('ReactUpdates');
 
+var invariant = require('invariant');
 var warning = require('warning');
-var validateCallback = require('validateCallback');
 
 function enqueueUpdate(internalInstance) {
   ReactUpdates.enqueueUpdate(internalInstance);
+}
+
+function formatUnexpectedArgument(arg) {
+  var type = typeof arg;
+  if (type !== 'object') {
+    return type;
+  }
+  var displayName = arg.constructor && arg.constructor.name || type;
+  var keys = Object.keys(arg);
+  if (keys.length > 0 && keys.length < 20) {
+    return `${displayName} (keys: ${keys.join(', ')})`;
+  }
+  return displayName;
 }
 
 function getInternalInstanceReadyForUpdate(publicInstance, callerName) {
@@ -134,7 +147,7 @@ var ReactUpdateQueue = {
     }
 
     if (callback) {
-      validateCallback(callback, callerName);
+      ReactUpdateQueue.validateCallback(callback, callerName);
       if (internalInstance._pendingCallbacks) {
         internalInstance._pendingCallbacks.push(callback);
       } else {
@@ -174,7 +187,7 @@ var ReactUpdateQueue = {
     internalInstance._pendingReplaceState = true;
 
     if (callback) {
-      validateCallback(callback, callerName);
+      ReactUpdateQueue.validateCallback(callback, callerName);
       if (internalInstance._pendingCallbacks) {
         internalInstance._pendingCallbacks.push(callback);
       } else {
@@ -222,7 +235,7 @@ var ReactUpdateQueue = {
     queue.push(partialState);
 
     if (callback) {
-      validateCallback(callback, callerName);
+      ReactUpdateQueue.validateCallback(callback, callerName);
       if (internalInstance._pendingCallbacks) {
         internalInstance._pendingCallbacks.push(callback);
       } else {
@@ -238,6 +251,16 @@ var ReactUpdateQueue = {
     // TODO: introduce _pendingContext instead of setting it directly.
     internalInstance._context = nextContext;
     enqueueUpdate(internalInstance);
+  },
+
+  validateCallback: function(callback, callerName) {
+    invariant(
+      !callback || typeof callback === 'function',
+      '%s(...): Expected the last optional `callback` argument to be a ' +
+      'function. Instead received: %s.',
+      callerName,
+      formatUnexpectedArgument(callback)
+    );
   },
 
 };

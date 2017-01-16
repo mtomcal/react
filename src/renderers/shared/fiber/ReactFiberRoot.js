@@ -39,6 +39,7 @@ exports.createFiberRoot = function(containerInfo : any) : FiberRoot {
     containerInfo: containerInfo,
     isScheduled: false,
     nextScheduledRoot: null,
+    callbackList: null,
     context: null,
     pendingContext: null,
   };

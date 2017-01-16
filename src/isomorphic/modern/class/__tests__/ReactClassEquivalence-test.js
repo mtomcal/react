@@ -31,14 +31,14 @@ describe('ReactClassEquivalence', () => {
 
 function runJest(testFile) {
   var cwd = process.cwd();
-  var extension = process.platform === 'win32' ? '.cmd' : '';
-  var jestBin = path.resolve('node_modules', '.bin', 'jest' + extension);
+  var jestBin = path.resolve('node_modules', '.bin', 'jest');
   var setupFile = path.resolve(
     'scripts',
     'jest',
     'setupSpecEquivalenceReporter.js'
   );
-  var result = spawnSync(jestBin, [
+  var result = spawnSync('node', [
+    jestBin,
     testFile,
     '--setupTestFrameworkScriptFile',
     setupFile,

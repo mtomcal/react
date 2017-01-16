@@ -23,6 +23,8 @@ module.exports = function(grunt) {
     'compare_size': require('./grunt/config/compare_size'),
   });
 
+  grunt.config.set('compress', require('./grunt/config/compress'));
+
   function spawnGulp(args, opts, done) {
 
     grunt.util.spawn({
@@ -199,12 +201,15 @@ module.exports = function(grunt) {
   grunt.registerTask('release:bower', releaseTasks.bower);
   grunt.registerTask('release:docs', releaseTasks.docs);
   grunt.registerTask('release:msg', releaseTasks.msg);
+  grunt.registerTask('release:starter', releaseTasks.starter);
 
   grunt.registerTask('release', [
     'release:setup',
     'clean',
     'build',
     'release:bower',
+    'release:starter',
+    'compress',
     'release:docs',
     'release:msg',
   ]);

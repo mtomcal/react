@@ -1266,7 +1266,7 @@ describe('ReactCompositeComponent', () => {
     var layer = document.createElement('div');
 
     class Component extends React.Component {
-      componentDidMount() {
+      componentWillMount() {
         ReactDOM.render(<div />, layer);
       }
 

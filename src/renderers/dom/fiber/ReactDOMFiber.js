@@ -57,10 +57,7 @@ findDOMNode._injectFiber(function(fiber: Fiber) {
 type DOMContainerElement = Element & { _reactRootContainer: ?Object };
 
 type Container = Element;
-type Props = {
-  autoFocus ?: boolean,
-  children ?: mixed,
-};
+type Props = { children ?: mixed };
 type Instance = Element;
 type TextInstance = Text;
 
@@ -108,7 +105,7 @@ function shouldAutoFocusHostComponent(
     case 'input':
     case 'select':
     case 'textarea':
-      return !!props.autoFocus;
+      return !!(props : any).autoFocus;
   }
   return false;
 }
@@ -116,16 +113,14 @@ function shouldAutoFocusHostComponent(
 var DOMRenderer = ReactFiberReconciler({
 
   getRootHostContext(rootContainerInstance : Container) : HostContext {
-    const ownNamespace = rootContainerInstance.namespaceURI || null;
-    const type = rootContainerInstance.tagName;
-    const namespace = getChildNamespace(ownNamespace, type);
+    const type = rootContainerInstance.tagName.toLowerCase();
     if (__DEV__) {
+      const namespace = getChildNamespace(null, type);
       const isMountingIntoDocument = rootContainerInstance.ownerDocument.documentElement === rootContainerInstance;
-      const validatedTag = isMountingIntoDocument ? '#document' : type.toLowerCase();
-      const ancestorInfo = updatedAncestorInfo(null, validatedTag, null);
+      const ancestorInfo = updatedAncestorInfo(null, isMountingIntoDocument ? '#document' : type, null);
       return {namespace, ancestorInfo};
     }
-    return namespace;
+    return getChildNamespace(null, type);
   },
 
   getChildHostContext(
@@ -142,14 +137,10 @@ var DOMRenderer = ReactFiberReconciler({
     return getChildNamespace(parentNamespace, type);
   },
 
-  getPublicInstance(instance) {
-    return instance;
-  },
-
   prepareForCommit() : void {
     eventsEnabled = ReactBrowserEventEmitter.isEnabled();
-    selectionInformation = ReactInputSelection.getSelectionInformation();
     ReactBrowserEventEmitter.setEnabled(false);
+    selectionInformation = ReactInputSelection.getSelectionInformation();
   },
 
   resetAfterCommit() : void {
@@ -228,7 +219,9 @@ var DOMRenderer = ReactFiberReconciler({
     rootContainerInstance : Container,
     internalInstanceHandle : Object,
   ) : void {
-    ((domElement : any) : HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).focus();
+    if (shouldAutoFocusHostComponent(type, newProps)) {
+      (domElement : any).focus();
+    }
   },
 
   commitUpdate(
@@ -329,15 +322,9 @@ function renderSubtreeIntoContainer(parentComponent : ?ReactComponent<any, any, 
     while (container.lastChild) {
       container.removeChild(container.lastChild);
     }
-    const newRoot = DOMRenderer.createContainer(container);
-    root = container._reactRootContainer = newRoot;
-    // Initial mount should not be batched.
-    DOMRenderer.unbatchedUpdates(() => {
-      DOMRenderer.updateContainer(children, newRoot, parentComponent, callback);
-    });
-  } else {
-    DOMRenderer.updateContainer(children, root, parentComponent, callback);
+    root = container._reactRootContainer = DOMRenderer.createContainer(container);
   }
+  DOMRenderer.updateContainer(children, root, parentComponent, callback);
   return DOMRenderer.getPublicRootInstance(root);
 }
 
@@ -357,17 +344,10 @@ var ReactDOM = {
   },
 
   unmountComponentAtNode(container : DOMContainerElement) {
-    invariant(
-      isValidContainer(container),
-      'unmountComponentAtNode(...): Target container is not a DOM element.'
-    );
     warnAboutUnstableUse();
     if (container._reactRootContainer) {
-      // Unmount should not be batched.
-      return DOMRenderer.unbatchedUpdates(() => {
-        return renderSubtreeIntoContainer(null, null, container, () => {
-          container._reactRootContainer = null;
-        });
+      return renderSubtreeIntoContainer(null, null, container, () => {
+        container._reactRootContainer = null;
       });
     }
   },

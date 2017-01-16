@@ -130,7 +130,7 @@
           this.tick = this.tick.bind(this);
         }
         componentDidMount() {
-          this.intervalID = setInterval(this.tick, 1000);
+          this.invervalID = setInterval(this.tick, 1000);
         }
         tick() {
           ReactDOMFiber.unstable_deferredUpdates(() =>

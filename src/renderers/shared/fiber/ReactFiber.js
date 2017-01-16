@@ -50,7 +50,7 @@ var {
 var invariant = require('invariant');
 
 if (__DEV__) {
-  var getComponentName = require('getComponentName');
+  var { getCurrentFiberOwnerName } = require('ReactDebugCurrentFiber');
 }
 
 // A Fiber is work on a Component that needs to be done or was done. There can
@@ -102,7 +102,7 @@ export type Fiber = {
 
   // The ref last used to attach this node.
   // I'll avoid adding an owner field for prod and model that as functions.
-  ref: null | (((handle : mixed) => void) & { _stringRef: ?string }),
+  ref: null | (((handle : ?Object) => void) & { _stringRef: ?string }),
 
   // Input is the data coming into process this fiber. Arguments. Props.
   pendingProps: any, // This type will be more specific once we overload the tag.
@@ -111,7 +111,8 @@ export type Fiber = {
 
   // A queue of state updates and callbacks.
   updateQueue: UpdateQueue | null,
-
+  // A list of callbacks that should be called during the next commit.
+  callbackList: UpdateQueue | null,
   // The state used to create the output
   memoizedState: any,
 
@@ -202,6 +203,7 @@ var createFiber = function(tag : TypeOfWork, key : null | string) : Fiber {
     pendingProps: null,
     memoizedProps: null,
     updateQueue: null,
+    callbackList: null,
     memoizedState: null,
 
     effectTag: NoEffect,
@@ -277,7 +279,7 @@ exports.cloneFiber = function(fiber : Fiber, priorityLevel : PriorityLevel) : Fi
   // pendingProps is here for symmetry but is unnecessary in practice for now.
   // TODO: Pass in the new pendingProps as an argument maybe?
   alt.pendingProps = fiber.pendingProps;
-  cloneUpdateQueue(fiber, alt);
+  cloneUpdateQueue(alt, fiber);
   alt.pendingWorkPriority = priorityLevel;
 
   alt.memoizedProps = fiber.memoizedProps;
@@ -298,12 +300,7 @@ exports.createHostRootFiber = function() : Fiber {
 };
 
 exports.createFiberFromElement = function(element : ReactElement, priorityLevel : PriorityLevel) : Fiber {
-  let owner = null;
-  if (__DEV__) {
-    owner = element._owner;
-  }
-
-  const fiber = createFiberFromElementType(element.type, element.key, owner);
+  const fiber = createFiberFromElementType(element.type, element.key);
   fiber.pendingProps = element.props;
   fiber.pendingWorkPriority = priorityLevel;
 
@@ -331,7 +328,7 @@ exports.createFiberFromText = function(content : string, priorityLevel : Priorit
   return fiber;
 };
 
-function createFiberFromElementType(type : mixed, key : null | string, debugOwner : null | Fiber | ReactInstance) : Fiber {
+function createFiberFromElementType(type : mixed, key : null | string) : Fiber {
   let fiber;
   if (typeof type === 'function') {
     fiber = shouldConstruct(type) ?
@@ -366,7 +363,7 @@ function createFiberFromElementType(type : mixed, key : null | string, debugOwne
           ' You likely forgot to export your component from the file ' +
           'it\'s defined in.';
       }
-      const ownerName = debugOwner ? getComponentName(debugOwner) : null;
+      const ownerName = getCurrentFiberOwnerName();
       if (ownerName) {
         info += ' Check the render method of `' + ownerName + '`.';
       }

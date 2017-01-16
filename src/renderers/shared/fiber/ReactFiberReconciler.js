@@ -43,11 +43,10 @@ export type Deadline = {
 
 type OpaqueNode = Fiber;
 
-export type HostConfig<T, P, I, TI, PI, C, CX> = {
+export type HostConfig<T, P, I, TI, C, CX> = {
 
   getRootHostContext(rootContainerInstance : C) : CX,
   getChildHostContext(parentHostContext : CX, type : T) : CX,
-  getPublicInstance(instance : I | TI) : PI,
 
   createInstance(type : T, props : P, rootContainerInstance : C, hostContext : CX, internalInstanceHandle : OpaqueNode) : I,
   appendInitialChild(parentInstance : I, child : I | TI) : void,
@@ -83,7 +82,6 @@ export type Reconciler<C, I, TI> = {
   /* eslint-disable no-undef */
   // FIXME: ESLint complains about type parameter
   batchedUpdates<A>(fn : () => A) : A,
-  unbatchedUpdates<A>(fn : () => A) : A,
   syncUpdates<A>(fn : () => A) : A,
   deferredUpdates<A>(fn : () => A) : A,
   /* eslint-enable no-undef */
@@ -102,14 +100,13 @@ getContextForSubtree._injectFiber(function(fiber : Fiber) {
     parentContext;
 });
 
-module.exports = function<T, P, I, TI, PI, C, CX>(config : HostConfig<T, P, I, TI, PI, C, CX>) : Reconciler<C, I, TI> {
+module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C, CX>) : Reconciler<C, I, TI> {
 
   var {
     scheduleUpdate,
     getPriorityContext,
     performWithPriority,
     batchedUpdates,
-    unbatchedUpdates,
     syncUpdates,
     deferredUpdates,
   } = ReactFiberScheduler(config);
@@ -163,8 +160,6 @@ module.exports = function<T, P, I, TI, PI, C, CX>(config : HostConfig<T, P, I, T
     performWithPriority,
 
     batchedUpdates,
-
-    unbatchedUpdates,
 
     syncUpdates,
 

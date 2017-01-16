@@ -1,7 +1,7 @@
 import React, { Component } from 'react';
 import Draggable from 'react-draggable';
-import ReactNoop from 'react-noop-renderer';
-import ReactFiberInstrumentation from 'react-noop-renderer/lib/ReactFiberInstrumentation';
+import ReactNoop from '../../../../build/packages/react-noop-renderer';
+import ReactFiberInstrumentation from '../../../../build/packages/react-noop-renderer/lib/ReactFiberInstrumentation';
 import Editor from './Editor';
 import Fibers from './Fibers';
 import describeFibers from './describeFibers';
@@ -27,7 +27,7 @@ class App extends Component {
   constructor(props) {
     super(props);
     this.state = {
-      code: localStorage.getItem('fiber-debugger-code') || defaultCode,
+      code: defaultCode,
       isEditing: false,
       history: [],
       currentStep: 0,
@@ -51,9 +51,6 @@ class App extends Component {
     let currentStage;
     let currentRoot;
 
-    ReactFiberInstrumentation.debugTool = null;
-    ReactNoop.render(null);
-    ReactNoop.flush();
     ReactFiberInstrumentation.debugTool = {
       onMountContainer: (root) => {
         currentRoot = root;
@@ -61,39 +58,52 @@ class App extends Component {
       onUpdateContainer: (root) => {
         currentRoot = root;
       },
-      onBeginWork: (fiber) => {
+      onWillBeginWork: (fiber) => {
         const fibers = getFiberState(currentRoot, fiber);
         const stage = currentStage;
         this.setState(({ history }) => ({
           history: [
             ...history, {
-              action: 'BEGIN',
+              action: 'willBeginWork',
               fibers,
               stage
             }
           ]
         }));
       },
-      onCompleteWork: (fiber) => {
+      onDidBeginWork: (fiber) => {
         const fibers = getFiberState(currentRoot, fiber);
         const stage = currentStage;
         this.setState(({ history }) => ({
           history: [
             ...history, {
-              action: 'COMPLETE',
+              action: 'didBeginWork',
               fibers,
               stage
             }
           ]
         }));
       },
-      onCommitWork: (fiber) => {
+      onWillCompleteWork: (fiber) => {
         const fibers = getFiberState(currentRoot, fiber);
         const stage = currentStage;
         this.setState(({ history }) => ({
           history: [
             ...history, {
-              action: 'COMMIT',
+              action: 'willCompleteWork',
+              fibers,
+              stage
+            }
+          ]
+        }));
+      },
+      onDidCompleteWork: (fiber) => {
+        const fibers = getFiberState(currentRoot, fiber);
+        const stage = currentStage;
+        this.setState(({ history }) => ({
+          history: [
+            ...history, {
+              action: 'didCompleteWork',
               fibers,
               stage
             }
@@ -103,11 +113,6 @@ class App extends Component {
     };
     window.React = React;
     window.ReactNoop = ReactNoop;
-    window.expect = () => ({
-      toBe() {},
-      toContain() {},
-      toEqual() {},
-    });
     window.log = s => currentStage = s;
     // eslint-disable-next-line
     eval(window.Babel.transform(code, {
@@ -123,7 +128,6 @@ class App extends Component {
   }
 
   handleCloseEdit = (nextCode) => {
-    localStorage.setItem('fiber-debugger-code', nextCode);
     this.setState({
       isEditing: false,
       history: [],
@@ -141,10 +145,26 @@ class App extends Component {
 
     const { fibers, action, stage } = history[currentStep] || {};
     let friendlyAction;
+
     if (fibers) {
       let wipFiber = fibers.descriptions[fibers.workInProgressID];
       let friendlyFiber = wipFiber.type || wipFiber.tag + ' #' + wipFiber.id;
-      friendlyAction = `After ${action} on ${friendlyFiber}`;
+      switch (action) {
+        case 'willBeginWork':
+          friendlyAction = 'Before BEGIN phase on ' + friendlyFiber;
+          break;
+        case 'didBeginWork':
+          friendlyAction = 'After BEGIN phase on ' + friendlyFiber;
+          break;
+        case 'willCompleteWork':
+          friendlyAction = 'Before COMPLETE phase on ' + friendlyFiber;
+          break;
+        case 'didCompleteWork':
+          friendlyAction = 'After COMPLETE phase on ' + friendlyFiber;
+          break;
+        default:
+          throw new Error('Unknown action');
+      }
     }
 
     return (
@@ -166,7 +186,6 @@ class App extends Component {
         }}>
           <input
             type="range"
-            style={{ width: '25%' }}
             min={0}
             max={history.length - 1}
             value={currentStep}

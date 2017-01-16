@@ -22,8 +22,7 @@ export type ReifiedYield = { continuation: Fiber, props: Object };
 exports.createReifiedYield = function(yieldNode : ReactYield) : ReifiedYield {
   var fiber = createFiberFromElementType(
     yieldNode.continuation,
-    yieldNode.key,
-    null // debugOwner
+    yieldNode.key
   );
   return {
     continuation: fiber,
@@ -36,8 +35,7 @@ exports.createUpdatedReifiedYield = function(previousYield : ReifiedYield, yield
   if (fiber.type !== yieldNode.continuation) {
     fiber = createFiberFromElementType(
       yieldNode.continuation,
-      yieldNode.key,
-      null // debugOwner
+      yieldNode.key
     );
   }
   return {
