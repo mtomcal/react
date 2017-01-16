@@ -30,11 +30,12 @@ var { commitCallbacks } = require('ReactFiberUpdateQueue');
 var {
   Placement,
   Update,
+  Callback,
   ContentReset,
 } = require('ReactTypeOfSideEffect');
 
-module.exports = function<T, P, I, TI, C, CX>(
-  config : HostConfig<T, P, I, TI, C, CX>,
+module.exports = function<T, P, I, TI, PI, C, CX>(
+  config : HostConfig<T, P, I, TI, PI, C, CX>,
   hostContext : HostContext<C, CX>,
   captureError : (failedFiber : Fiber, error: Error) => ?Fiber
 ) {
@@ -47,6 +48,7 @@ module.exports = function<T, P, I, TI, C, CX>(
     appendChild,
     insertBefore,
     removeChild,
+    getPublicInstance,
   } = config;
 
   const {
@@ -81,13 +83,6 @@ module.exports = function<T, P, I, TI, C, CX>(
       if (currentRef && currentRef !== finishedWork.ref) {
         currentRef(null);
       }
-    }
-  }
-
-  function attachRef(current : ?Fiber, finishedWork : Fiber, instance : any) {
-    const ref = finishedWork.ref;
-    if (ref && (!current || current.ref !== ref)) {
-      ref(instance);
     }
   }
 
@@ -416,25 +411,22 @@ module.exports = function<T, P, I, TI, C, CX>(
               instance.componentDidUpdate(prevProps, prevState);
             }
           }
-          attachRef(current, finishedWork, instance);
         }
-        const callbackList = finishedWork.callbackList;
-        if (callbackList) {
-          commitCallbacks(finishedWork, callbackList, instance);
+        if ((finishedWork.effectTag & Callback) && finishedWork.updateQueue) {
+          commitCallbacks(finishedWork, finishedWork.updateQueue, instance);
         }
         return;
       }
       case HostRoot: {
-        const callbackList = finishedWork.callbackList;
-        if (callbackList) {
+        const updateQueue = finishedWork.updateQueue;
+        if (updateQueue) {
           const instance = finishedWork.child && finishedWork.child.stateNode;
-          commitCallbacks(finishedWork, callbackList, instance);
+          commitCallbacks(finishedWork, updateQueue, instance);
         }
         return;
       }
       case HostComponent: {
         const instance : I = finishedWork.stateNode;
-        attachRef(current, finishedWork, instance);
 
         // Renderers may schedule work to be done after host components are mounted
         // (eg DOM renderer may schedule auto-focus for inputs and form controls).
@@ -465,11 +457,23 @@ module.exports = function<T, P, I, TI, C, CX>(
     }
   }
 
+  function commitRef(finishedWork : Fiber) {
+    if (finishedWork.tag !== ClassComponent && finishedWork.tag !== HostComponent) {
+      return;
+    }
+    const ref = finishedWork.ref;
+    if (ref) {
+      const instance = getPublicInstance(finishedWork.stateNode);
+      ref(instance);
+    }
+  }
+
   return {
     commitPlacement,
     commitDeletion,
     commitWork,
     commitLifeCycles,
+    commitRef,
   };
 
 };

@@ -54,6 +54,10 @@ var NoopRenderer = ReactFiberReconciler({
     return emptyObject;
   },
 
+  getPublicInstance(instance) {
+    return instance;
+  },
+
   createInstance(type : string, props : Props) : Instance {
     const inst = {
       id: instanceCounter++,
@@ -263,6 +267,8 @@ var ReactNoop = {
   },
 
   batchedUpdates: NoopRenderer.batchedUpdates,
+
+  unbatchedUpdates: NoopRenderer.unbatchedUpdates,
 
   syncUpdates: NoopRenderer.syncUpdates,
 

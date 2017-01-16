@@ -17,16 +17,30 @@ import type { FiberRoot } from 'ReactFiberRoot';
 import type { HostConfig, Deadline } from 'ReactFiberReconciler';
 import type { PriorityLevel } from 'ReactPriorityLevel';
 
+export type CapturedError = {
+  componentName : ?string,
+  componentStack : string,
+  error : Error,
+  errorBoundaryFound : boolean,
+  errorBoundaryName : ?string,
+  willRetry : boolean,
+};
+
 var {
   popContextProvider,
 } = require('ReactFiberContext');
 const { reset } = require('ReactFiberStack');
+var {
+  getStackAddendumByWorkInProgressFiber,
+} = require('ReactComponentTreeHook');
+var { logCapturedError } = require('ReactFiberErrorLogger');
 
 var ReactFiberBeginWork = require('ReactFiberBeginWork');
 var ReactFiberCompleteWork = require('ReactFiberCompleteWork');
 var ReactFiberCommitWork = require('ReactFiberCommitWork');
 var ReactFiberHostContext = require('ReactFiberHostContext');
 var ReactCurrentOwner = require('ReactCurrentOwner');
+var getComponentName = require('getComponentName');
 
 var { cloneFiber } = require('ReactFiber');
 
@@ -49,6 +63,7 @@ var {
   ContentReset,
   Callback,
   Err,
+  Ref,
 } = require('ReactTypeOfSideEffect');
 
 var {
@@ -73,7 +88,7 @@ if (__DEV__) {
 
 var timeHeuristicForUnitOfWork = 1;
 
-module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C, CX>) {
+module.exports = function<T, P, I, TI, PI, C, CX>(config : HostConfig<T, P, I, TI, PI, C, CX>) {
   const hostContext = ReactFiberHostContext(config);
   const { popHostContainer, popHostContext, resetHostContainer } = hostContext;
   const { beginWork, beginFailedWork } = ReactFiberBeginWork(
@@ -88,6 +103,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
     commitDeletion,
     commitWork,
     commitLifeCycles,
+    commitRef,
   } = ReactFiberCommitWork(config, hostContext, captureError);
   const {
     scheduleAnimationCallback: hostScheduleAnimationCallback,
@@ -107,9 +123,11 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
   // is thrown during reconciliation.
   let priorityContextBeforeReconciliation : PriorityLevel = NoWork;
 
-  // Keeps track of whether we're currently in a work loop. Used to batch
-  // nested updates.
+  // Keeps track of whether we're currently in a work loop.
   let isPerformingWork : boolean = false;
+
+  // Keeps track of whether we should should batch sync updates.
+  let isBatchingUpdates : boolean = false;
 
   // The next work in progress fiber that we're currently working on.
   let nextUnitOfWork : ?Fiber = null;
@@ -130,7 +148,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
 
   // Keep track of which fibers have captured an error that need to be handled.
   // Work is removed from this collection after unstable_handleError is called.
-  let capturedErrors : Map<Fiber, Error> | null = null;
+  let capturedErrors : Map<Fiber, CapturedError> | null = null;
   // Keep track of which fibers have failed during the current batch of work.
   // This is a different set than capturedErrors, because it is not reset until
   // the end of the batch. This is needed to propagate errors correctly if a
@@ -239,7 +257,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       // possible bitmap value, we remove the secondary effects from the
       // effect tag and switch on that value.
       let primaryEffectTag =
-        nextEffect.effectTag & ~(Callback | Err | ContentReset);
+        nextEffect.effectTag & ~(Callback | Err | ContentReset | Ref);
       switch (primaryEffectTag) {
         case Placement: {
           commitPlacement(nextEffect);
@@ -289,6 +307,10 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       // Use Task priority for lifecycle updates
       if (nextEffect.effectTag & (Update | Callback)) {
         commitLifeCycles(current, nextEffect);
+      }
+
+      if (nextEffect.effectTag & Ref) {
+        commitRef(nextEffect);
       }
 
       if (nextEffect.effectTag & Err) {
@@ -345,7 +367,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       firstEffect = finishedWork.firstEffect;
     }
 
-    prepareForCommit();
+    const commitInfo = prepareForCommit();
 
     // Commit all the side-effects within a tree. We'll do this in two passes.
     // The first pass performs all the host insertions, updates, deletions and
@@ -366,7 +388,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       }
     }
 
-    resetAfterCommit();
+    resetAfterCommit(commitInfo);
 
     // In the second pass we'll perform all life-cycles and ref callbacks.
     // Life-cycles happen as a separate pass so that all placements, updates,
@@ -388,6 +410,9 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
     }
 
     isCommitting = false;
+    if (__DEV__ && ReactFiberInstrumentation.debugTool) {
+      ReactFiberInstrumentation.debugTool.onCommitWork(finishedWork);
+    }
 
     // If we caught any errors during this commit, schedule their boundaries
     // to update.
@@ -434,16 +459,15 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       const current = workInProgress.alternate;
       const next = completeWork(current, workInProgress);
 
-      // The work is now done. We don't need this anymore. This flags
-      // to the system not to redo any work here.
-      workInProgress.pendingProps = null;
-
       const returnFiber = workInProgress.return;
       const siblingFiber = workInProgress.sibling;
 
       resetWorkPriority(workInProgress);
 
       if (next) {
+        if (__DEV__ && ReactFiberInstrumentation.debugTool) {
+          ReactFiberInstrumentation.debugTool.onCompleteWork(workInProgress);
+        }
         // If completing this work spawned new work, do that next. We'll come
         // back here again.
         return next;
@@ -479,6 +503,10 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
         }
       }
 
+      if (__DEV__ && ReactFiberInstrumentation.debugTool) {
+        ReactFiberInstrumentation.debugTool.onCompleteWork(workInProgress);
+      }
+
       if (siblingFiber) {
         // If there is more work to do in this returnFiber, do that next.
         return siblingFiber;
@@ -503,40 +531,27 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
   }
 
   function performUnitOfWork(workInProgress : Fiber) : ?Fiber {
-
     // The current, flushed, state of this fiber is the alternate.
     // Ideally nothing should rely on this, but relying on it here
     // means that we don't need an additional field on the work in
     // progress.
     const current = workInProgress.alternate;
 
-    if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-      ReactFiberInstrumentation.debugTool.onWillBeginWork(workInProgress);
-    }
     // See if beginning this work spawns more work.
     let next = beginWork(current, workInProgress, nextPriorityLevel);
-
     if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-      ReactFiberInstrumentation.debugTool.onDidBeginWork(workInProgress);
+      ReactFiberInstrumentation.debugTool.onBeginWork(workInProgress);
     }
 
     if (!next) {
-      if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-        ReactFiberInstrumentation.debugTool.onWillCompleteWork(workInProgress);
-      }
       // If this doesn't spawn new work, complete the current work.
       next = completeUnitOfWork(workInProgress);
-      if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-        ReactFiberInstrumentation.debugTool.onDidCompleteWork(workInProgress);
-      }
     }
 
     ReactCurrentOwner.current = null;
     if (__DEV__) {
       ReactDebugCurrentFiber.current = null;
     }
-
-
 
     return next;
   }
@@ -549,25 +564,15 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
     // progress.
     const current = workInProgress.alternate;
 
-    if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-      ReactFiberInstrumentation.debugTool.onWillBeginWork(workInProgress);
-    }
     // See if beginning this work spawns more work.
     let next = beginFailedWork(current, workInProgress, nextPriorityLevel);
-
     if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-      ReactFiberInstrumentation.debugTool.onDidBeginWork(workInProgress);
+      ReactFiberInstrumentation.debugTool.onBeginWork(workInProgress);
     }
 
     if (!next) {
-      if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-        ReactFiberInstrumentation.debugTool.onWillCompleteWork(workInProgress);
-      }
       // If this doesn't spawn new work, complete the current work.
       next = completeUnitOfWork(workInProgress);
-      if (__DEV__ && ReactFiberInstrumentation.debugTool) {
-        ReactFiberInstrumentation.debugTool.onDidCompleteWork(workInProgress);
-      }
     }
 
     ReactCurrentOwner.current = null;
@@ -705,39 +710,40 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       } catch (error) {
         // We caught an error during either the begin or complete phases.
         const failedWork = nextUnitOfWork;
-        if (!failedWork) {
-          throw new Error('Should have nextUnitOfWork.');
-        }
+        if (failedWork) {
+          // Reset the priority context to its value before reconcilation.
+          priorityContext = priorityContextBeforeReconciliation;
 
-        // Reset the priority context to its value before reconcilation.
-        priorityContext = priorityContextBeforeReconciliation;
+          // "Capture" the error by finding the nearest boundary. If there is no
+          // error boundary, the nearest host container acts as one. If
+          // captureError returns null, the error was intentionally ignored.
+          const maybeBoundary = captureError(failedWork, error);
+          if (maybeBoundary) {
+            const boundary = maybeBoundary;
 
-        // "Capture" the error by finding the nearest boundary. If there is no
-        // error boundary, the nearest host container acts as one. If
-        // captureError returns null, the error was intentionally ignored.
-        const maybeBoundary = captureError(failedWork, error);
-        if (maybeBoundary) {
-          const boundary = maybeBoundary;
+            // Complete the boundary as if it rendered null. This will unmount
+            // the failed tree.
+            beginFailedWork(boundary.alternate, boundary, priorityLevel);
 
-          // Complete the boundary as if it rendered null. This will unmount
-          // the failed tree.
-          beginFailedWork(boundary.alternate, boundary, priorityLevel);
-
-          // The next unit of work is now the boundary that captured the error.
-          // Conceptually, we're unwinding the stack. We need to unwind the
-          // context stack, too, from the failed work to the boundary that
-          // captured the error.
-          // TODO: If we set the memoized props in beginWork instead of
-          // completeWork, rather than unwind the stack, we can just restart
-          // from the root. Can't do that until then because without memoized
-          // props, the nodes higher up in the tree will rerender unnecessarily.
-          if (failedWork) {
+            // The next unit of work is now the boundary that captured the error.
+            // Conceptually, we're unwinding the stack. We need to unwind the
+            // context stack, too, from the failed work to the boundary that
+            // captured the error.
+            // TODO: If we set the memoized props in beginWork instead of
+            // completeWork, rather than unwind the stack, we can just restart
+            // from the root. Can't do that until then because without memoized
+            // props, the nodes higher up in the tree will rerender unnecessarily.
             unwindContexts(failedWork, boundary);
+            nextUnitOfWork = completeUnitOfWork(boundary);
           }
-          nextUnitOfWork = completeUnitOfWork(boundary);
+          // Continue performing work
+          continue;
+        } else if (!fatalError) {
+          // There is no current unit of work. This is a worst-case scenario
+          // and should only be possible if there's a bug in the renderer, e.g.
+          // inside resetAfterCommit.
+          fatalError = error;
         }
-        // Continue performing work
-        continue;
       } finally {
         priorityContext = priorityContextBeforeReconciliation;
       }
@@ -778,22 +784,18 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       }
     }
 
+    const errorToThrow = fatalError || firstUncaughtError;
+
     // We're done performing work. Time to clean up.
     isPerformingWork = false;
+    fatalError = null;
+    firstUncaughtError = null;
     capturedErrors = null;
     failedBoundaries = null;
 
-    // It's now safe to throw errors.
-    if (fatalError) {
-      let e = fatalError;
-      fatalError = null;
-      firstUncaughtError = null;
-      throw e;
-    }
-    if (firstUncaughtError) {
-      let e = firstUncaughtError;
-      firstUncaughtError = null;
-      throw e;
+    // It's safe to throw any unhandled errors.
+    if (errorToThrow) {
+      throw errorToThrow;
     }
   }
 
@@ -809,6 +811,12 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
 
     // Search for the nearest error boundary.
     let boundary : ?Fiber = null;
+
+    // Passed to logCapturedError()
+    let errorBoundaryFound : boolean = false;
+    let willRetry : boolean = false;
+    let errorBoundaryName : ?string = null;
+
     // Host containers are a special case. If the failed work itself is a host
     // container, then it acts as its own boundary. In all other cases, we
     // ignore the work itself and only search through the parents.
@@ -827,6 +835,9 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
         if (node.tag === ClassComponent) {
           const instance = node.stateNode;
           if (typeof instance.unstable_handleError === 'function') {
+            errorBoundaryFound = true;
+            errorBoundaryName = getComponentName(node);
+
             if (isFailedBoundary(node)) {
               // This boundary is already in a failed state. The error should
               // propagate to the next boundary — except in the
@@ -853,6 +864,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
             } else {
               // Found an error boundary!
               boundary = node;
+              willRetry = true;
             }
           }
         } else if (node.tag === HostRoot) {
@@ -871,15 +883,29 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       }
       failedBoundaries.add(boundary);
 
+      // This method is unsafe outside of the begin and complete phases.
+      // We might be in the commit phase when an error is captured.
+      // The risk is that the return path from this Fiber may not be accurate.
+      // That risk is acceptable given the benefit of providing users more context.
+      const componentStack = getStackAddendumByWorkInProgressFiber(failedWork);
+      const componentName = getComponentName(failedWork);
+
       // Add to the collection of captured errors. This is stored as a global
-      // map of errors keyed by the boundaries that capture them. We mostly
-      // use this Map as a Set; it's a Map only to avoid adding a field to Fiber
-      // to store the error.
+      // map of errors and their component stack location keyed by the boundaries
+      // that capture them. We mostly use this Map as a Set; it's a Map only to
+      // avoid adding a field to Fiber to store the error.
       if (!capturedErrors) {
         capturedErrors = new Map();
       }
+      capturedErrors.set(boundary, {
+        componentName,
+        componentStack,
+        error,
+        errorBoundaryFound,
+        errorBoundaryName,
+        willRetry,
+      });
 
-      capturedErrors.set(boundary, error);
       // If we're in the commit phase, defer scheduling an update on the
       // boundary until after the commit is complete
       if (isCommitting) {
@@ -900,6 +926,8 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
   }
 
   function hasCapturedError(fiber : Fiber) : boolean {
+    // TODO: capturedErrors should store the boundary instance, to avoid needing
+    // to check the alternate.
     return Boolean(
       capturedErrors &&
       (capturedErrors.has(fiber) || (fiber.alternate && capturedErrors.has(fiber.alternate)))
@@ -907,29 +935,45 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
   }
 
   function isFailedBoundary(fiber : Fiber) : boolean {
-    const res = Boolean(
+    // TODO: failedBoundaries should store the boundary instance, to avoid
+    // needing to check the alternate.
+    return Boolean(
       failedBoundaries &&
       (failedBoundaries.has(fiber) || (fiber.alternate && failedBoundaries.has(fiber.alternate)))
     );
-    return res;
   }
 
   function commitErrorHandling(effectfulFiber : Fiber) {
-    let error;
+    let capturedError;
     if (capturedErrors) {
-      error = capturedErrors.get(effectfulFiber);
+      capturedError = capturedErrors.get(effectfulFiber);
       capturedErrors.delete(effectfulFiber);
-      if (!error) {
+      if (!capturedError) {
         if (effectfulFiber.alternate) {
           effectfulFiber = effectfulFiber.alternate;
-          error = capturedErrors.get(effectfulFiber);
+          capturedError = capturedErrors.get(effectfulFiber);
           capturedErrors.delete(effectfulFiber);
         }
       }
     }
 
-    if (!error) {
+    if (!capturedError) {
       throw new Error('No error for given unit of work.');
+    }
+
+    let error;
+
+    // Conditional required to satisfy Flow
+    if (capturedError) {
+      error = capturedError.error;
+
+      try {
+        logCapturedError(capturedError);
+      } catch (e) {
+        // Prevent cycle if logCapturedError() throws.
+        // A cycle may still occur if logCapturedError renders a component that throws.
+        console.error(e);
+      }
     }
 
     switch (effectfulFiber.tag) {
@@ -973,8 +1017,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
     }
   }
 
-  function scheduleRoot(root : FiberRoot) {
-    const priorityLevel = root.current.pendingWorkPriority;
+  function scheduleRoot(root : FiberRoot, priorityLevel : PriorityLevel) {
     if (priorityLevel === NoWork) {
       return;
     }
@@ -991,19 +1034,14 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
         lastScheduledRoot = root;
       }
     }
+  }
 
+  function scheduleUpdate(fiber : Fiber, priorityLevel : PriorityLevel) {
     if (priorityLevel <= nextPriorityLevel) {
       // We must reset the current unit of work pointer so that we restart the
       // search from the root during the next tick, in case there is now higher
       // priority work somewhere earlier than before.
       nextUnitOfWork = null;
-    }
-  }
-
-  function scheduleUpdate(fiber : Fiber, priorityLevel : PriorityLevel) {
-    // If we're in a batch, downgrade sync priority to task priority
-    if (priorityLevel === SynchronousPriority && isPerformingWork) {
-      priorityLevel = TaskPriority;
     }
 
     let node = fiber;
@@ -1014,14 +1052,14 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
       // matches) we can exit safely knowing that the rest of the path is correct.
       shouldContinue = false;
       if (node.pendingWorkPriority === NoWork ||
-          node.pendingWorkPriority >= priorityLevel) {
+          node.pendingWorkPriority > priorityLevel) {
         // Priority did not match. Update and keep going.
         shouldContinue = true;
         node.pendingWorkPriority = priorityLevel;
       }
       if (node.alternate) {
         if (node.alternate.pendingWorkPriority === NoWork ||
-            node.alternate.pendingWorkPriority >= priorityLevel) {
+            node.alternate.pendingWorkPriority > priorityLevel) {
           // Priority did not match. Update and keep going.
           shouldContinue = true;
           node.alternate.pendingWorkPriority = priorityLevel;
@@ -1035,15 +1073,11 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
           // schedule a callback to perform work later.
           switch (priorityLevel) {
             case SynchronousPriority:
-              // Perform work immediately
               performWork(SynchronousPriority);
               return;
             case TaskPriority:
-              // If we're already performing work, Task work will be flushed before
-              // exiting the current batch. So we can skip it here.
-              if (!isPerformingWork) {
-                performWork(TaskPriority);
-              }
+              // TODO: If we're not already performing work, schedule a
+              // deferred callback.
               return;
             case AnimationPriority:
               scheduleAnimationCallback(performAnimationWork);
@@ -1064,7 +1098,9 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
   }
 
   function getPriorityContext() : PriorityLevel {
-    if (priorityContext === SynchronousPriority && isPerformingWork) {
+    // If we're in a batch, or if we're already performing work, downgrade sync
+    // priority to task priority
+    if (priorityContext === SynchronousPriority && (isPerformingWork || isBatchingUpdates)) {
       return TaskPriority;
     }
     return priorityContext;
@@ -1085,18 +1121,27 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
   }
 
   function batchedUpdates<A, R>(fn : (a: A) => R, a : A) : R {
-    const previousIsPerformingWork = isPerformingWork;
-    // Simulate that we're performing work so that sync work is batched
-    isPerformingWork = true;
+    const previousIsBatchingUpdates = isBatchingUpdates;
+    isBatchingUpdates = true;
     try {
       return fn(a);
     } finally {
-      isPerformingWork = previousIsPerformingWork;
-      // If we're not already performing work, we need to flush any task work
+      isBatchingUpdates = previousIsBatchingUpdates;
+      // If we're not already inside a batch, we need to flush any task work
       // that was created by the user-provided function.
-      if (!isPerformingWork) {
+      if (!isPerformingWork && !isBatchingUpdates) {
         performWork(TaskPriority);
       }
+    }
+  }
+
+  function unbatchedUpdates<A>(fn : () => A) : A {
+    const previousIsBatchingUpdates = isBatchingUpdates;
+    isBatchingUpdates = false;
+    try {
+      return fn();
+    } finally {
+      isBatchingUpdates = previousIsBatchingUpdates;
     }
   }
 
@@ -1125,6 +1170,7 @@ module.exports = function<T, P, I, TI, C, CX>(config : HostConfig<T, P, I, TI, C
     getPriorityContext: getPriorityContext,
     performWithPriority: performWithPriority,
     batchedUpdates: batchedUpdates,
+    unbatchedUpdates: unbatchedUpdates,
     syncUpdates: syncUpdates,
     deferredUpdates: deferredUpdates,
   };
